@@ -1,0 +1,8 @@
+# Scripts du dossier scripts
+
+| Fichier | Description | Emplacement | Intégré à VectorOS |
+| --- | --- | --- | --- |
+| README | Documentation des scripts présents dans ce dossier. | /Users/rodolphe/Documents/Vector/scripts/README | |
+| escapepod | Utilitaire de gestion du serveur EscapePod. Options : `-ip` (affiche ESCAPEPOD_IP), `-updateip` (découvre et configure l'IP du serveur), `-updatescripts` (lance syncscripts pour synchroniser vers le robot), `-help` (menu d'aide). Intègre les fonctionnalités de ep_updateip. | MacBook Pro : /Users/rodolphe/Documents/Vector/scripts/ | X |
+| ep_updateip | ⚠️ DÉPRÉCIÉ : Utiliser `escapepod -updateip` à la place. Résout l'adresse IP de l'EscapePod, met à jour le /etc/hosts du serveur et exporte la variable ESCAPEPOD_IP. | On Vector : /usr/local/bin | X  |
+| syncscripts | Script exécuté sur le robot : connexion SSH au serveur EscapePod, copie du dossier source serveur vers `~/Public/scripts`, puis rsync unidirectionnel `serveur -> robot` vers `/usr/local/bin`. Vérifie explicitement le sens de synchronisation avant exécution. | Robot Vector : /usr/local/bin | X |

@@ -1,0 +1,439 @@
+#!/bin/bash
+
+# ============================================================================
+# Script : escapepod
+# Description : Utilitaire de gestion pour escapepod
+# Fonctionnalités :
+#   - Gestion de la variable d'environnement ESCAPEPOD_IP
+#   - Mise à jour automatique de l'IP de escapepod
+#   - Menu d'aide
+# ============================================================================
+
+# ==========================================================================
+# Configuration 
+# ============================================================================
+ESCAPEPOD_HOST="MacBook-pro-de-Rodolphe.local"
+ESCAPEPOD_ALIAS="escapepod.local"
+ESCAPEPOD_USER="rodolphe"
+HOSTS_FILE="/etc/hosts"
+HOSTS_BACKUP_FILE="/etc/hosts.bak"
+ESCAPEPOD_ENV_VAR_NAME="ESCAPEPOD_IP"
+ESCAPEPOD_PROFILE_FILE="/etc/profile.d/escapepod_env.sh"
+VECTOR_RSA_PRIVATE_KEY="/data/ssh/id_rsa_Vector-W2B1"
+ESCAPEPOD_SCRIPTS_SOURCE_DIR="/Users/rodolphe/Documents/Vector/scripts"
+VECTOR_SCRIPTS_TARGET_DIR="/data/scripts"
+ROS2_CONTAINER_NAME="ros2-jazzy-desktop"
+
+# Messages d'aide
+show_help() {
+  cat << 'EOF'
+╔════════════════════════════════════════════════════════════════╗
+║                      ESCAPEPOD TOOLKIT                         ║
+╚════════════════════════════════════════════════════════════════╝
+
+Usage: escapepod [OPTION]
+
+Options:
+  -ip, --show-ip        Affiche la variable d'environnement ESCAPEPOD_IP
+  -updateip             Met à jour l'IP de escapepod
+  -pullscripts          Synchronise directement les scripts source escapepod vers le robot
+  -ssh                  Ouvre une connexion SSH vers EscapePod
+  -ros2-start           Se connecte en SSH et démarre le conteneur ROS2
+  -help, --help, -h     Affiche ce menu d'aide
+
+Examples:
+  escapepod -ip                 # Affiche l'adresse IP de escapepod
+  escapepod -updateip           # Découvre et configure l'IP automatiquement
+  escapepod -pullscripts        # Synchronise directement escapepod -> robot
+  escapepod -ssh                # Ouvre un shell SSH sur EscapePod
+  escapepod -ros2-start         # Se connecte en SSH et démarre le conteneur ROS2
+  escapepod -help               # Affiche cette aide
+
+Variable d'environnement :
+  ESCAPEPOD_IP                  L'adresse IP de escapepod (ex: 192.168.1.100)
+
+EOF
+}
+
+# ==========================================================================
+# Fonction : ssh_escapepod
+# Description : Ouvre une connexion SSH vers escapepod
+#               avec la cle configuree sur le robot
+# ==========================================================================
+ssh_escapepod() {
+  local target="${ESCAPEPOD_IP:-}"
+
+  if [[ -z "$target" ]]; then
+    echo "❌ Aucune cible SSH définie."
+    echo "   Définis ESCAPEPOD_IP avant d'utiliser -ssh."
+    return 1
+  fi
+
+  exec ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$ESCAPEPOD_USER@$target"
+}
+
+# ==========================================================================
+# Fonction : ros2_start
+# Description : Démarre le conteneur ros2 via SSH sur escapepod
+# ==========================================================================
+ros2_start() {
+  local target="${ESCAPEPOD_IP}"
+
+  if [[ -z "$target" ]]; then
+    echo "❌ Aucune cible SSH définie."
+    echo "   La variable d'environnement ESCAPEPOD_IP n'est pas définie. Utilise 'escapepod -updateip'."
+    return 1
+  fi
+
+  echo "🔌 Connexion SSH vers $ESCAPEPOD_USER@$target..."
+
+  ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$ESCAPEPOD_USER@$target" "PATH=/usr/local/bin:/usr/bin:/bin:\$PATH; export PATH; set -euo pipefail; if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx '$ROS2_CONTAINER_NAME'; then docker start '$ROS2_CONTAINER_NAME' >/dev/null && echo '✅ $ROS2_CONTAINER_NAME démarré'; else echo '❌ Conteneur $ROS2_CONTAINER_NAME introuvable ou docker indisponible (stack non déployé ?)'; exit 2; fi"
+}
+
+# ============================================================================
+# Fonction : show_escapepod_ip
+# Description : Affiche la variable d'environnement ESCAPEPOD_IP
+# ============================================================================
+show_escapepod_ip() {
+  if [[ -z "$ESCAPEPOD_IP" ]]; then
+    echo "❌ La variable d'environnement ESCAPEPOD_IP n'est pas définie."
+    echo "   Utilise 'escapepod -updateip' pour configurer l'IP de escapepod."
+    return 1
+  fi
+  
+  echo "✅ ESCAPEPOD_IP = $ESCAPEPOD_IP"
+  return 0
+}
+
+# ============================================================================
+# Fonction : resolve_host_ipv4
+# Description : Résout le nom d'hôte en adresse IPv4
+# ============================================================================
+resolve_host_ipv4() {
+  local host="$1"
+  local ip=""
+
+  if command -v avahi-resolve-host-name >/dev/null 2>&1; then
+    ip=$(avahi-resolve-host-name "$host" 2>/dev/null | awk '{print $2}' | head -n 1)
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      echo "$ip"
+      return 0
+    fi
+  fi
+
+  if command -v nslookup >/dev/null 2>&1; then
+    ip=$(nslookup "$host" 2>/dev/null | awk '/^Address[[:space:]]*[: ]/{print $NF}' | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | head -n 1)
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      echo "$ip"
+      return 0
+    fi
+  fi
+
+  if command -v ping >/dev/null 2>&1; then
+    ip=$(ping -c 1 "$host" 2>/dev/null | sed -nE 's/.*\((([0-9]{1,3}\.){3}[0-9]{1,3})\).*/\1/p' | head -n 1)
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      echo "$ip"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# ============================================================================
+# Fonction : update_escapepod_ip
+# Description : Découvre l'IP de escapepod et met à jour les configurations
+# ============================================================================
+update_escapepod_ip() {
+  local host="$ESCAPEPOD_HOST"
+  
+  echo "🔍 Recherche de l'adresse IP pour $host..."
+  
+  # Étape 1 - Récupérer l'adresse IP de escapepod
+  local IP
+  IP=$(resolve_host_ipv4 "$host")
+  
+  # Vérifier si l'IP est valide
+  if [[ -z "$IP" ]]; then
+    echo "❌ Erreur : Impossible de résoudre l'IP de escapepod $host."
+    return 1
+  fi
+  
+  echo "✅ Adresse IP de escapepod récupérée pour $host : $IP"
+  
+  echo "📝 Mise à jour du fichier /etc/hosts de escapepod..."
+  
+  # Faire une sauvegarde de /etc/hosts
+  if ! sudo cp "$HOSTS_FILE" "$HOSTS_BACKUP_FILE"; then
+    echo "❌ Erreur : Impossible de sauvegarder $HOSTS_FILE"
+    return 1
+  fi
+  
+  # Supprimer les lignes contenant l'alias configuré
+  sudo sed -i "/[[:space:]]${ESCAPEPOD_ALIAS//./\\.}\\([[:space:]]\\|$\\)/d" "$HOSTS_FILE"
+  
+  # Ajouter une nouvelle ligne avec l'alias et l'adresse IP récupérée
+  echo -e "$IP $ESCAPEPOD_ALIAS" | sudo tee -a "$HOSTS_FILE" > /dev/null
+  
+  echo "✅ Le fichier /etc/hosts de escapepod a été mis à jour avec $ESCAPEPOD_ALIAS → $IP"
+  
+  echo "🔐 Configuration de la variable d'environnement $ESCAPEPOD_ENV_VAR_NAME de escapepod..."
+  
+  # Écriture persistante de la variable d'environnement
+  printf 'export %s="%s"\n' "$ESCAPEPOD_ENV_VAR_NAME" "$IP" | sudo tee "$ESCAPEPOD_PROFILE_FILE" > /dev/null
+  sudo chmod 0644 "$ESCAPEPOD_PROFILE_FILE"
+  
+  # Activation immédiate dans le shell courant du script
+  export "${ESCAPEPOD_ENV_VAR_NAME}=${IP}"
+  
+  echo "✅ L'adresse IP a été enregistrée dans la variable d'environnement $ESCAPEPOD_ENV_VAR_NAME"
+  echo "   Persistée dans : $ESCAPEPOD_PROFILE_FILE"
+  echo ""
+  echo "📌 Pour accéder à cette variable dans votre shell :"
+  echo "   source $ESCAPEPOD_PROFILE_FILE"
+  echo "   echo \$$ESCAPEPOD_ENV_VAR_NAME"
+  
+  return 0
+}
+
+# ============================================================================
+# Fonction : update_scripts
+# Description : Synchronise escapepod -> robot
+# ============================================================================
+update_scripts() {
+  local target_source=""
+
+  echo "🛠️ Passage en lecture/écriture avec remount rw..."
+  if ! mount -o remount,rw /; then
+    echo "❌ ERREUR : Impossible de remonter / en mode rw."
+    return 1
+  fi
+
+  sync_check_escapepod_ip() {
+    if [[ -n "$ESCAPEPOD_IP" ]]; then
+      echo "✅ ESCAPEPOD_IP (escapepod) = $ESCAPEPOD_IP"
+      return 0
+    fi
+
+    echo "❌ ERREUR : ESCAPEPOD_IP n'est pas définie."
+    echo "   Définis l'IP de escapepod, par exemple : export ESCAPEPOD_IP=192.168.x.x"
+    return 1
+  }
+
+  sync_check_ssh_key() {
+    if [[ ! -f "$VECTOR_RSA_PRIVATE_KEY" ]]; then
+      echo "❌ ERREUR : La clé SSH n'existe pas : $VECTOR_RSA_PRIVATE_KEY"
+      return 1
+    fi
+
+    echo "✅ Clé SSH trouvée : $VECTOR_RSA_PRIVATE_KEY"
+    return 0
+  }
+
+  sync_check_robot_target_dir() {
+    if [[ ! -d "$VECTOR_SCRIPTS_TARGET_DIR" ]]; then
+      echo "❌ ERREUR : Le dossier cible robot n'existe pas : $VECTOR_SCRIPTS_TARGET_DIR"
+      return 1
+    fi
+
+    echo "✅ Dossier cible robot trouvé : $VECTOR_SCRIPTS_TARGET_DIR"
+    return 0
+  }
+
+  sync_test_connection() {
+    echo "🔌 Test de connexion SSH vers $ESCAPEPOD_USER@$ESCAPEPOD_IP"
+
+    if ssh -i "$VECTOR_RSA_PRIVATE_KEY" -o ConnectTimeout=5 "$ESCAPEPOD_USER@$ESCAPEPOD_IP" "echo SSH connexion OK" >/dev/null 2>&1; then
+      echo "✅ Connexion SSH établie"
+      return 0
+    fi
+
+    echo "❌ ERREUR : Impossible de se connecter a escapepod"
+    return 1
+  }
+
+  sync_check_escapepod_source_dir() {
+    if ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$ESCAPEPOD_USER@$ESCAPEPOD_IP" "test -d '$ESCAPEPOD_SCRIPTS_SOURCE_DIR'"; then
+      echo "✅ Dossier source escapepod trouvé : $ESCAPEPOD_SCRIPTS_SOURCE_DIR"
+      return 0
+    fi
+
+    echo "❌ ERREUR : Dossier source escapepod introuvable : $ESCAPEPOD_SCRIPTS_SOURCE_DIR"
+    return 1
+  }
+
+  sync_validate_direction() {
+    target_source="$ESCAPEPOD_USER@$ESCAPEPOD_IP:$ESCAPEPOD_SCRIPTS_SOURCE_DIR/"
+
+    echo "🔍 Vérification du sens de synchronisation"
+    echo "   Escapepod (source SSH): $target_source"
+    echo "   Robot (destination locale): $VECTOR_SCRIPTS_TARGET_DIR/"
+
+    if [[ "$VECTOR_SCRIPTS_TARGET_DIR" == "$ESCAPEPOD_SCRIPTS_SOURCE_DIR" ]]; then
+      echo "❌ ERREUR : Source et destination identiques : arrêt de sécurité."
+      return 1
+    fi
+
+    if [[ "$target_source" != *@*:* ]]; then
+      echo "❌ ERREUR : Source rsync invalide (attendu source SSH)."
+      return 1
+    fi
+
+    if [[ "$VECTOR_SCRIPTS_TARGET_DIR" == *"@"* || "$VECTOR_SCRIPTS_TARGET_DIR" == *":"* ]]; then
+      echo "❌ ERREUR : Destination rsync invalide (attendu dossier local robot)."
+      return 1
+    fi
+
+    echo "✅ Sens confirmé : escapepod -> robot"
+    return 0
+  }
+
+  sync_rsync_scripts() {
+    echo "🔄 Synchronisation via rsync (escapepod -> robot)"
+    echo "   Source (escapepod): $target_source"
+    echo "   Cible (robot): $VECTOR_SCRIPTS_TARGET_DIR/"
+
+    if rsync -avz \
+      -e "ssh -i $VECTOR_RSA_PRIVATE_KEY" \
+      --delete \
+      "$target_source" \
+      "$VECTOR_SCRIPTS_TARGET_DIR/"; then
+      echo "✅ Synchronisation réussie"
+      return 0
+    fi
+
+    echo "❌ ERREUR : Échec de la synchronisation rsync"
+    return 1
+  }
+
+  sync_make_executable() {
+    echo "🔧 Application des permissions exécutables sur le robot"
+
+    if find "$VECTOR_SCRIPTS_TARGET_DIR" -type f -exec chmod +x {} + 2>/dev/null; then
+      echo "✅ Permissions appliquées"
+      return 0
+    fi
+
+    echo "❌ ERREUR : Échec du changement de permissions"
+    return 1
+  }
+
+  sync_configure_path() {
+    local shell_config="/etc/profile.d/local_bin_path.sh"
+
+    echo "🛠️ Configuration du PATH sur le robot"
+
+    cat > /tmp/setup_path.sh << PATHEOF
+#!/bin/bash
+if [[ ":\$PATH:" != *":$VECTOR_SCRIPTS_TARGET_DIR:"* ]]; then
+  export PATH="$VECTOR_SCRIPTS_TARGET_DIR:\$PATH"
+fi
+PATHEOF
+    chmod +x /tmp/setup_path.sh
+
+    if sudo cp /tmp/setup_path.sh "$shell_config" && sudo chmod 644 "$shell_config" && rm /tmp/setup_path.sh; then
+      if [[ ":$PATH:" != *":$VECTOR_SCRIPTS_TARGET_DIR:"* ]]; then
+        export PATH="$VECTOR_SCRIPTS_TARGET_DIR:$PATH"
+      fi
+      echo "✅ PATH configuré dans $shell_config"
+      echo "   Dossier ajouté : $VECTOR_SCRIPTS_TARGET_DIR"
+      return 0
+    fi
+
+    echo "⚠️ Impossible de configurer le PATH (sudo requis)."
+    return 1
+  }
+
+  echo "🔄 Synchronisation escapepod -> robot"
+  echo ""
+
+  sync_check_escapepod_ip || return 1
+  sync_check_ssh_key || return 1
+  sync_check_robot_target_dir || return 1
+  echo ""
+
+  sync_test_connection || return 1
+  echo ""
+
+  sync_check_escapepod_source_dir || return 1
+  echo ""
+
+  sync_validate_direction || return 1
+  echo ""
+
+  sync_rsync_scripts || return 1
+  echo ""
+
+  sync_make_executable || return 1
+  echo ""
+
+  sync_configure_path
+  echo ""
+
+  echo "🛠️ Activation du mode exécutable sur /data..."
+  if ! mount -o remount,exec /data; then
+    echo "❌ ERREUR : Impossible de remonter /data en mode exec."
+    return 1
+  fi
+  echo "✅ /data est monté en mode exec"
+  echo ""
+
+  echo "✅ Synchronisation escapepod -> robot terminée"
+  echo "Les scripts sont disponibles dans $VECTOR_SCRIPTS_TARGET_DIR sur le robot."
+
+  return 0
+}
+
+# ============================================================================
+# Programme principal
+# ============================================================================
+main() {
+  # Si aucun argument fourni, afficher l'aide
+  if [[ $# -eq 0 ]]; then
+    show_help
+    return 0
+  fi
+  
+  case "$1" in
+    -ip|--show-ip)
+      show_escapepod_ip
+      ;;
+    -updateip|--update-ip)
+      update_escapepod_ip
+      ;;
+    -pullscripts|--pull-scripts)
+      update_scripts
+      ;;
+    -ssh|--ssh)
+      ssh_escapepod
+      ;;
+    -ros2-start|--ros2-start)
+      ros2_start
+      ;;
+    ros2)
+      case "${2:-}" in
+        start)
+          ros2_start
+          ;;
+        *)
+          echo "❌ Option inconnue : ros2 ${2:-}"
+          echo ""
+          show_help
+          exit 1
+          ;;
+      esac
+      ;;
+    -h|-help|--help)
+      show_help
+      ;;
+    *)
+      echo "❌ Option inconnue : $1"
+      echo ""
+      show_help
+      exit 1
+      ;;
+  esac
+}
+
+# Exécuter le programme
+main "$@"
