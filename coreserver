@@ -1,107 +1,128 @@
 #!/bin/bash
 
 # ============================================================================
-# Script : escapepod
-# Description : Utilitaire de gestion pour escapepod
+# Script : coreserver
+# Description : Utilitaire de gestion pour coreserver
 # Fonctionnalités :
-#   - Gestion de la variable d'environnement ESCAPEPOD_IP
-#   - Mise à jour automatique de l'IP de escapepod
+#   - Gestion de la variable d'environnement CORESERVER_IP
+#   - Mise à jour automatique de l'IP de coreserver
 #   - Menu d'aide
 # ============================================================================
 
 # ==========================================================================
 # Configuration 
 # ============================================================================
-ESCAPEPOD_HOST="MacBook-pro-de-Rodolphe.local"
-ESCAPEPOD_ALIAS="escapepod.local"
-ESCAPEPOD_USER="rodolphe"
+CORESERVER_HOST="MacBook-Air-de-Rodolphe.local"
+CORESERVER_ALIAS="coreserver.local"
+CORESERVER_USER="rodolphe"
 HOSTS_FILE="/etc/hosts"
 HOSTS_BACKUP_FILE="/etc/hosts.bak"
-ESCAPEPOD_ENV_VAR_NAME="ESCAPEPOD_IP"
-ESCAPEPOD_PROFILE_FILE="/etc/profile.d/escapepod_env.sh"
+CORESERVER_ENV_VAR_NAME="CORESERVER_IP"
+CORESERVER_PROFILE_FILE="/etc/profile.d/coreserver_env.sh"
 VECTOR_RSA_PRIVATE_KEY="/data/ssh/id_rsa_Vector-W2B1"
-ESCAPEPOD_SCRIPTS_SOURCE_DIR="/Users/rodolphe/Documents/Vector/scripts"
+CORESERVER_SCRIPTS_SOURCE_DIR="/Users/rodolphe/Documents/Vector/vector-scripts"
 VECTOR_SCRIPTS_TARGET_DIR="/data/scripts"
 ROS2_CONTAINER_NAME="ros2-jazzy-desktop"
+WIREPOD_CONTAINER_NAME="wire-pod"
 
 # Messages d'aide
 show_help() {
   cat << 'EOF'
 ╔════════════════════════════════════════════════════════════════╗
-║                      ESCAPEPOD TOOLKIT                         ║
+║                      CORESERVER TOOLKIT                         ║
 ╚════════════════════════════════════════════════════════════════╝
 
-Usage: escapepod [OPTION]
+Usage: coreserver [OPTION]
 
 Options:
-  -ip, --show-ip        Affiche la variable d'environnement ESCAPEPOD_IP
-  -updateip             Met à jour l'IP de escapepod
-  -pullscripts          Synchronise directement les scripts source escapepod vers le robot
-  -ssh                  Ouvre une connexion SSH vers EscapePod
+  -ip, --show-ip        Affiche la variable d'environnement CORESERVER_IP
+  -updateip             Met à jour l'IP de coreserver
+  -pullscripts          Synchronise directement les scripts source coreserver vers le robot en utilisant rsync
+  -ssh                  Ouvre une connexion SSH vers CoreServer
+  -wirepod-start        Se connecte en SSH et démarre le conteneur wire-pod
   -ros2-start           Se connecte en SSH et démarre le conteneur ROS2
   -help, --help, -h     Affiche ce menu d'aide
 
 Examples:
-  escapepod -ip                 # Affiche l'adresse IP de escapepod
-  escapepod -updateip           # Découvre et configure l'IP automatiquement
-  escapepod -pullscripts        # Synchronise directement escapepod -> robot
-  escapepod -ssh                # Ouvre un shell SSH sur EscapePod
-  escapepod -ros2-start         # Se connecte en SSH et démarre le conteneur ROS2
-  escapepod -help               # Affiche cette aide
+  coreserver -ip                 # Affiche l'adresse IP de coreserver
+  coreserver -updateip           # Découvre et configure l'IP automatiquement
+  coreserver -pullscripts        # Synchronise directement coreserver -> robot
+  coreserver -ssh                # Ouvre un shell SSH sur CoreServer
+  coreserver -wirepod-start      # Se connecte en SSH et démarre le conteneur wire-pod
+  coreserver -ros2-start         # Se connecte en SSH et démarre le conteneur ROS2
+  coreserver -help               # Affiche cette aide
 
 Variable d'environnement :
-  ESCAPEPOD_IP                  L'adresse IP de escapepod (ex: 192.168.1.100)
+  CORESERVER_IP                  L'adresse IP de CoreServer(ex: 192.168.1.100)
 
 EOF
 }
 
 # ==========================================================================
-# Fonction : ssh_escapepod
-# Description : Ouvre une connexion SSH vers escapepod
+# Fonction : ssh_coreserver
+# Description : Ouvre une connexion SSH vers coreserver
 #               avec la cle configuree sur le robot
 # ==========================================================================
-ssh_escapepod() {
-  local target="${ESCAPEPOD_IP:-}"
+ssh_coreserver() {
+  local target="${CORESERVER_IP:-}"
 
   if [[ -z "$target" ]]; then
     echo "❌ Aucune cible SSH définie."
-    echo "   Définis ESCAPEPOD_IP avant d'utiliser -ssh."
+    echo "   Définis CORESERVER_IP avant d'utiliser -ssh."
     return 1
   fi
 
-  exec ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$ESCAPEPOD_USER@$target"
+  exec ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$CORESERVER_USER@$target"
 }
 
 # ==========================================================================
 # Fonction : ros2_start
-# Description : Démarre le conteneur ros2 via SSH sur escapepod
+# Description : Démarre le conteneur ros2 via SSH sur coreserver
 # ==========================================================================
 ros2_start() {
-  local target="${ESCAPEPOD_IP}"
+  local target="${CORESERVER_IP}"
 
   if [[ -z "$target" ]]; then
     echo "❌ Aucune cible SSH définie."
-    echo "   La variable d'environnement ESCAPEPOD_IP n'est pas définie. Utilise 'escapepod -updateip'."
+    echo "   La variable d'environnement CORESERVER_IP n'est pas définie. Utilise 'coreserver -updateip'."
     return 1
   fi
 
-  echo "🔌 Connexion SSH vers $ESCAPEPOD_USER@$target..."
+  echo "🔌 Connexion SSH vers $CORESERVER_USER@$target..."
 
-  ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$ESCAPEPOD_USER@$target" "PATH=/usr/local/bin:/usr/bin:/bin:\$PATH; export PATH; set -euo pipefail; if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx '$ROS2_CONTAINER_NAME'; then docker start '$ROS2_CONTAINER_NAME' >/dev/null && echo '✅ $ROS2_CONTAINER_NAME démarré'; else echo '❌ Conteneur $ROS2_CONTAINER_NAME introuvable ou docker indisponible (stack non déployé ?)'; exit 2; fi"
+  ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$CORESERVER_USER@$target" "PATH=/usr/local/bin:/usr/bin:/bin:\$PATH; export PATH; set -euo pipefail; if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx '$ROS2_CONTAINER_NAME'; then docker start '$ROS2_CONTAINER_NAME' >/dev/null && echo '✅ $ROS2_CONTAINER_NAME démarré'; else echo '❌ Conteneur $ROS2_CONTAINER_NAME introuvable ou docker indisponible (stack non déployé ?)'; exit 2; fi"
+}
+
+# ==========================================================================
+# Fonction : wirepod_start
+# Description : Démarre le conteneur wire-pod via SSH sur coreserver
+# ==========================================================================
+wirepod_start() {
+  local target="${CORESERVER_IP}"
+
+  if [[ -z "$target" ]]; then
+    echo "❌ Aucune cible SSH définie."
+    echo "   La variable d'environnement CORESERVER_IP n'est pas définie. Utilise 'coreserver -updateip'."
+    return 1
+  fi
+
+  echo "🔌 Connexion SSH vers $CORESERVER_USER@$target..."
+
+  ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$CORESERVER_USER@$target" "PATH=/usr/local/bin:/usr/bin:/bin:\$PATH; export PATH; set -euo pipefail; if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx '$WIREPOD_CONTAINER_NAME'; then docker start '$WIREPOD_CONTAINER_NAME' >/dev/null && echo '✅ $WIREPOD_CONTAINER_NAME démarré'; else echo '❌ Conteneur $WIREPOD_CONTAINER_NAME introuvable ou docker indisponible (stack non déployé ?)'; exit 2; fi"
 }
 
 # ============================================================================
-# Fonction : show_escapepod_ip
-# Description : Affiche la variable d'environnement ESCAPEPOD_IP
+# Fonction : show_coreserver_ip
+# Description : Affiche la variable d'environnement CORESERVER_IP
 # ============================================================================
-show_escapepod_ip() {
-  if [[ -z "$ESCAPEPOD_IP" ]]; then
-    echo "❌ La variable d'environnement ESCAPEPOD_IP n'est pas définie."
-    echo "   Utilise 'escapepod -updateip' pour configurer l'IP de escapepod."
+show_coreserver_ip() {
+  if [[ -z "$CORESERVER_IP" ]]; then
+    echo "❌ La variable d'environnement CORESERVER_IP n'est pas définie."
+    echo "   Utilise 'coreserver -updateip' pour configurer l'IP de coreserver."
     return 1
   fi
   
-  echo "✅ ESCAPEPOD_IP = $ESCAPEPOD_IP"
+  echo "✅ CORESERVER_IP = $CORESERVER_IP"
   return 0
 }
 
@@ -141,27 +162,27 @@ resolve_host_ipv4() {
 }
 
 # ============================================================================
-# Fonction : update_escapepod_ip
-# Description : Découvre l'IP de escapepod et met à jour les configurations
+# Fonction : update_coreserver_ip
+# Description : Découvre l'IP de coreserver et met à jour les configurations
 # ============================================================================
-update_escapepod_ip() {
-  local host="$ESCAPEPOD_HOST"
+update_coreserver_ip() {
+  local host="$CORESERVER_HOST"
   
   echo "🔍 Recherche de l'adresse IP pour $host..."
   
-  # Étape 1 - Récupérer l'adresse IP de escapepod
+  # Étape 1 - Récupérer l'adresse IP de coreserver
   local IP
   IP=$(resolve_host_ipv4 "$host")
   
   # Vérifier si l'IP est valide
   if [[ -z "$IP" ]]; then
-    echo "❌ Erreur : Impossible de résoudre l'IP de escapepod $host."
+    echo "❌ Erreur : Impossible de résoudre l'IP de coreserver $host."
     return 1
   fi
   
-  echo "✅ Adresse IP de escapepod récupérée pour $host : $IP"
+  echo "✅ Adresse IP de coreserver récupérée pour $host : $IP"
   
-  echo "📝 Mise à jour du fichier /etc/hosts de escapepod..."
+  echo "📝 Mise à jour du fichier /etc/hosts du robot..."
   
   # Faire une sauvegarde de /etc/hosts
   if ! sudo cp "$HOSTS_FILE" "$HOSTS_BACKUP_FILE"; then
@@ -170,35 +191,39 @@ update_escapepod_ip() {
   fi
   
   # Supprimer les lignes contenant l'alias configuré
-  sudo sed -i "/[[:space:]]${ESCAPEPOD_ALIAS//./\\.}\\([[:space:]]\\|$\\)/d" "$HOSTS_FILE"
+  sudo sed -i "/[[:space:]]${CORESERVER_ALIAS//./\\.}\\([[:space:]]\\|$\\)/d" "$HOSTS_FILE"
   
   # Ajouter une nouvelle ligne avec l'alias et l'adresse IP récupérée
-  echo -e "$IP $ESCAPEPOD_ALIAS" | sudo tee -a "$HOSTS_FILE" > /dev/null
+  echo -e "$IP $CORESERVER_ALIAS" | sudo tee -a "$HOSTS_FILE" > /dev/null
   
-  echo "✅ Le fichier /etc/hosts de escapepod a été mis à jour avec $ESCAPEPOD_ALIAS → $IP"
+  # Pour des raisons de compatibilité avec les scripts existants de wire-pod et de wireOS, ajouter aussi une entrée générique "escapepod" pointant vers la même IP
+  sudo sed -i '/[[:space:]]escapepod([[:space:]]|$)/d' "$HOSTS_FILE"
+  echo -e "$IP escapepod" | sudo tee -a "$HOSTS_FILE" > /dev/null
+
+  echo "✅ Le fichier /etc/hosts du robot a été mis à jour avec $CORESERVER_ALIAS → $IP et escapepod → $IP"
   
-  echo "🔐 Configuration de la variable d'environnement $ESCAPEPOD_ENV_VAR_NAME de escapepod..."
+  echo "🔐 Configuration de la variable d'environnement $CORESERVER_ENV_VAR_NAME de coreserver..."
   
   # Écriture persistante de la variable d'environnement
-  printf 'export %s="%s"\n' "$ESCAPEPOD_ENV_VAR_NAME" "$IP" | sudo tee "$ESCAPEPOD_PROFILE_FILE" > /dev/null
-  sudo chmod 0644 "$ESCAPEPOD_PROFILE_FILE"
+  printf 'export %s="%s"\n' "$CORESERVER_ENV_VAR_NAME" "$IP" | sudo tee "$CORESERVER_PROFILE_FILE" > /dev/null
+  sudo chmod 0644 "$CORESERVER_PROFILE_FILE"
   
   # Activation immédiate dans le shell courant du script
-  export "${ESCAPEPOD_ENV_VAR_NAME}=${IP}"
+  export "${CORESERVER_ENV_VAR_NAME}=${IP}"
   
-  echo "✅ L'adresse IP a été enregistrée dans la variable d'environnement $ESCAPEPOD_ENV_VAR_NAME"
-  echo "   Persistée dans : $ESCAPEPOD_PROFILE_FILE"
+  echo "✅ L'adresse IP a été enregistrée dans la variable d'environnement $CORESERVER_ENV_VAR_NAME"
+  echo "   Persistée dans : $CORESERVER_PROFILE_FILE"
   echo ""
   echo "📌 Pour accéder à cette variable dans votre shell :"
-  echo "   source $ESCAPEPOD_PROFILE_FILE"
-  echo "   echo \$$ESCAPEPOD_ENV_VAR_NAME"
+  echo "   source $CORESERVER_PROFILE_FILE"
+  echo "   echo \$$CORESERVER_ENV_VAR_NAME"
   
   return 0
 }
 
 # ============================================================================
 # Fonction : update_scripts
-# Description : Synchronise escapepod -> robot
+# Description : Synchronise coreserver -> robot
 # ============================================================================
 update_scripts() {
   local target_source=""
@@ -209,14 +234,14 @@ update_scripts() {
     return 1
   fi
 
-  sync_check_escapepod_ip() {
-    if [[ -n "$ESCAPEPOD_IP" ]]; then
-      echo "✅ ESCAPEPOD_IP (escapepod) = $ESCAPEPOD_IP"
+  sync_check_coreserver_ip() {
+    if [[ -n "$CORESERVER_IP" ]]; then
+      echo "✅ CORESERVER_IP (coreserver) = $CORESERVER_IP"
       return 0
     fi
 
-    echo "❌ ERREUR : ESCAPEPOD_IP n'est pas définie."
-    echo "   Définis l'IP de escapepod, par exemple : export ESCAPEPOD_IP=192.168.x.x"
+    echo "❌ ERREUR : CORESERVER_IP n'est pas définie."
+    echo "   Définis l'IP de coreserver, par exemple : export CORESERVER_IP=192.168.x.x"
     return 1
   }
 
@@ -241,35 +266,35 @@ update_scripts() {
   }
 
   sync_test_connection() {
-    echo "🔌 Test de connexion SSH vers $ESCAPEPOD_USER@$ESCAPEPOD_IP"
+    echo "🔌 Test de connexion SSH vers $CORESERVER_USER@$CORESERVER_IP"
 
-    if ssh -i "$VECTOR_RSA_PRIVATE_KEY" -o ConnectTimeout=5 "$ESCAPEPOD_USER@$ESCAPEPOD_IP" "echo SSH connexion OK" >/dev/null 2>&1; then
+    if ssh -i "$VECTOR_RSA_PRIVATE_KEY" -o ConnectTimeout=5 "$CORESERVER_USER@$CORESERVER_IP" "echo SSH connexion OK" >/dev/null 2>&1; then
       echo "✅ Connexion SSH établie"
       return 0
     fi
 
-    echo "❌ ERREUR : Impossible de se connecter a escapepod"
+    echo "❌ ERREUR : Impossible de se connecter a coreserver"
     return 1
   }
 
-  sync_check_escapepod_source_dir() {
-    if ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$ESCAPEPOD_USER@$ESCAPEPOD_IP" "test -d '$ESCAPEPOD_SCRIPTS_SOURCE_DIR'"; then
-      echo "✅ Dossier source escapepod trouvé : $ESCAPEPOD_SCRIPTS_SOURCE_DIR"
+  sync_check_coreserver_source_dir() {
+    if ssh -i "$VECTOR_RSA_PRIVATE_KEY" "$CORESERVER_USER@$CORESERVER_IP" "test -d '$CORESERVER_SCRIPTS_SOURCE_DIR'"; then
+      echo "✅ Dossier source coreserver trouvé : $CORESERVER_SCRIPTS_SOURCE_DIR"
       return 0
     fi
 
-    echo "❌ ERREUR : Dossier source escapepod introuvable : $ESCAPEPOD_SCRIPTS_SOURCE_DIR"
+    echo "❌ ERREUR : Dossier source coreserver introuvable : $CORESERVER_SCRIPTS_SOURCE_DIR"
     return 1
   }
 
   sync_validate_direction() {
-    target_source="$ESCAPEPOD_USER@$ESCAPEPOD_IP:$ESCAPEPOD_SCRIPTS_SOURCE_DIR/"
+    target_source="$CORESERVER_USER@$CORESERVER_IP:$CORESERVER_SCRIPTS_SOURCE_DIR/"
 
     echo "🔍 Vérification du sens de synchronisation"
     echo "   Escapepod (source SSH): $target_source"
     echo "   Robot (destination locale): $VECTOR_SCRIPTS_TARGET_DIR/"
 
-    if [[ "$VECTOR_SCRIPTS_TARGET_DIR" == "$ESCAPEPOD_SCRIPTS_SOURCE_DIR" ]]; then
+    if [[ "$VECTOR_SCRIPTS_TARGET_DIR" == "$CORESERVER_SCRIPTS_SOURCE_DIR" ]]; then
       echo "❌ ERREUR : Source et destination identiques : arrêt de sécurité."
       return 1
     fi
@@ -284,13 +309,13 @@ update_scripts() {
       return 1
     fi
 
-    echo "✅ Sens confirmé : escapepod -> robot"
+    echo "✅ Sens confirmé : coreserver -> robot"
     return 0
   }
 
   sync_rsync_scripts() {
-    echo "🔄 Synchronisation via rsync (escapepod -> robot)"
-    echo "   Source (escapepod): $target_source"
+    echo "🔄 Synchronisation via rsync (coreserver -> robot)"
+    echo "   Source (coreserver): $target_source"
     echo "   Cible (robot): $VECTOR_SCRIPTS_TARGET_DIR/"
 
     if rsync -avz \
@@ -344,10 +369,10 @@ PATHEOF
     return 1
   }
 
-  echo "🔄 Synchronisation escapepod -> robot"
+  echo "🔄 Synchronisation coreserver -> robot"
   echo ""
 
-  sync_check_escapepod_ip || return 1
+  sync_check_coreserver_ip || return 1
   sync_check_ssh_key || return 1
   sync_check_robot_target_dir || return 1
   echo ""
@@ -355,7 +380,7 @@ PATHEOF
   sync_test_connection || return 1
   echo ""
 
-  sync_check_escapepod_source_dir || return 1
+  sync_check_coreserver_source_dir || return 1
   echo ""
 
   sync_validate_direction || return 1
@@ -378,7 +403,7 @@ PATHEOF
   echo "✅ /data est monté en mode exec"
   echo ""
 
-  echo "✅ Synchronisation escapepod -> robot terminée"
+  echo "✅ Synchronisation coreserver -> robot terminée"
   echo "Les scripts sont disponibles dans $VECTOR_SCRIPTS_TARGET_DIR sur le robot."
 
   return 0
@@ -396,16 +421,19 @@ main() {
   
   case "$1" in
     -ip|--show-ip)
-      show_escapepod_ip
+      show_coreserver_ip
       ;;
     -updateip|--update-ip)
-      update_escapepod_ip
+      update_coreserver_ip
       ;;
     -pullscripts|--pull-scripts)
       update_scripts
       ;;
     -ssh|--ssh)
-      ssh_escapepod
+      ssh_coreserver
+      ;;
+    -wirepod-start|--wirepod-start)
+      wirepod_start
       ;;
     -ros2-start|--ros2-start)
       ros2_start
